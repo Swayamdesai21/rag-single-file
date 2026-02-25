@@ -14,3 +14,4 @@ python-multipart
 docx2txt
 python-pptx
 pylev
+huggingface_hub
