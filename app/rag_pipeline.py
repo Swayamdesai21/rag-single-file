@@ -4,9 +4,9 @@ from langchain_core.documents import Document
 from app.embeddings import get_embedding_model
 from app.vector_store import get_vector_store
 from app.llm import get_llm
-from app.config import TOP_K
+from app.config import TOP_K, COLLECTION_NAME
 
-# Global instances cache
+# Global instances
 _embedding_model = None
 _vector_store = None
 _llm = None
@@ -26,7 +26,8 @@ def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
 
 def format_chat_history(history):
-    if not history: return ""
+    if not history:
+        return ""
     formatted = []
     for msg in history:
         role = getattr(msg, "role", msg.get("role") if isinstance(msg, dict) else "user")
@@ -34,62 +35,59 @@ def format_chat_history(history):
         formatted.append(f"{role.capitalize()}: {content}")
     return "\n".join(formatted)
 
-def get_session_documents_direct(vs, session_id: str) -> list:
+
+def get_all_session_docs(vs, session_id: str) -> list:
     """
-    Directly scrolls the Qdrant collection and returns all documents
-    matching this session_id. This is 100% reliable because it goes
-    straight to the database without relying on vector-distance or filter parsing.
+    Directly scans Qdrant collection and returns ALL docs for this session.
+    Uses Python-side matching — no filter bugs, no type mismatches.
+    No extra embedding calls — just a scan.
     """
-    all_matching_docs = []
+    matched = []
     try:
-        # Scroll the entire collection (up to 1000 items) and match in Python
         points, _ = vs.client.scroll(
-            collection_name=vs.collection_name,
-            limit=1000,
+            collection_name=COLLECTION_NAME,
+            limit=500,
             with_payload=True,
             with_vectors=False
         )
-        
-        print(f"DIAGNOSTIC: Total points in collection: {len(points)}", flush=True)
-        
+
+        print(f"SCAN: {len(points)} total points in '{COLLECTION_NAME}'", flush=True)
+
         for pt in points:
-            payload = pt.payload
-            # Check every possible location the session_id might be stored
+            p = pt.payload
+            # Retrieve session_id from wherever it might be stored
             stored_id = (
-                payload.get("session_id") or
-                payload.get("metadata", {}).get("session_id") or
-                ""
+                str(p.get("session_id", "")) or
+                str(p.get("metadata", {}).get("session_id", ""))
             )
-            stored_id_str = str(stored_id)
-            
-            if stored_id_str == session_id:
-                page_content = payload.get("page_content", "")
-                if page_content:
-                    all_matching_docs.append(Document(
-                        page_content=page_content,
-                        metadata={"session_id": session_id}
-                    ))
-        
-        print(f"DIAGNOSTIC: Found {len(all_matching_docs)} matching docs for session '{session_id}'", flush=True)
-        
-        if all_matching_docs:
-            # Log the first available session_id to help debug mismatches
-            for pt in points[:1]:
-                p = pt.payload
-                found_id = p.get("session_id") or p.get("metadata", {}).get("session_id")
-                print(f"DIAGNOSTIC: First point in collection has session_id='{found_id}'", flush=True)
-        
+            if stored_id == session_id:
+                content = p.get("page_content", "")
+                if content:
+                    matched.append(Document(page_content=content, metadata={"session_id": session_id}))
+
+        print(f"SCAN: {len(matched)} docs matched session_id='{session_id}'", flush=True)
+
+        if not matched and points:
+            # Log what's actually in the DB to help diagnose mismatch
+            sample = points[0].payload
+            sample_id = (
+                sample.get("session_id") or
+                sample.get("metadata", {}).get("session_id")
+            )
+            print(f"MISMATCH: DB has session_id='{sample_id}', searched for '{session_id}'", flush=True)
+
     except Exception as e:
         print(f"ERROR during scroll: {e}", flush=True)
-    
-    return all_matching_docs
+
+    return matched[:TOP_K]
+
 
 def build_rag_pipeline():
     emb, vs, llm = get_shared_components()
-    
+
     prompt = ChatPromptTemplate.from_template(
-        """You are a professional AI assistant. Answer based ONLY on the provided CONTEXT.
-If CONTEXT is 'NO_DOCUMENTS_UPLOADED_FOR_THIS_CHAT', tell the user to upload a document first.
+        """You are a professional AI assistant. Answer based ONLY on the CONTEXT below.
+If CONTEXT is 'NO_DOCUMENTS_UPLOADED_FOR_THIS_CHAT', ask the user to upload a document first.
 
 CONTEXT:
 {context}
@@ -106,41 +104,18 @@ ANSWER:"""
     def get_dynamic_context(input_data):
         session_id = str(input_data.get("session_id", "default"))
         question = input_data["question"]
-        
-        print(f"RAG: Looking for docs for session_id='{session_id}'", flush=True)
+        print(f"RAG: session='{session_id}' | question='{question}'", flush=True)
 
-        try:
-            # PRIMARY: Direct scroll-based match (100% reliable)
-            docs = get_session_documents_direct(vs, session_id)
-            
-            # If we found documents, rank them by similarity using embeddings
-            if docs:
-                # Use embedding to find the most relevant chunks
-                try:
-                    query_embedding = emb.embed_query(question)
-                    # Simple dot-product ranking
-                    import numpy as np
-                    scored = []
-                    for doc in docs:
-                        doc_embedding = emb.embed_query(doc.page_content[:500])  # Limit for speed
-                        score = sum(a*b for a, b in zip(query_embedding, doc_embedding))
-                        scored.append((score, doc))
-                    scored.sort(key=lambda x: x[0], reverse=True)
-                    docs = [doc for _, doc in scored[:TOP_K]]
-                except Exception as rank_err:
-                    print(f"Ranking failed, using unranked docs: {rank_err}", flush=True)
-                    docs = docs[:TOP_K]  # Use first TOP_K without ranking
-            
-            return format_docs(docs)
-        except Exception as e:
-            print(f"ERROR in context retrieval: {e}", flush=True)
-            return "NO_DOCUMENTS_UPLOADED_FOR_THIS_CHAT"
+        # Use direct Python-side scan — bypasses all Qdrant filter issues
+        docs = get_all_session_docs(vs, session_id)
+        return format_docs(docs)
 
     return ({
         "context": RunnableLambda(get_dynamic_context),
         "question": RunnableLambda(lambda x: x["question"]),
         "chat_history": RunnableLambda(lambda x: format_chat_history(x.get("chat_history", []))),
     } | prompt | llm)
+
 
 def reset_rag_pipeline():
     global _rag_chain, _embedding_model, _vector_store, _llm
@@ -149,11 +124,12 @@ def reset_rag_pipeline():
     _vector_store = None
     _llm = None
 
+
 def answer_question(question: str, chat_history: list = None, session_id: str = "default"):
     global _rag_chain
     if _rag_chain is None:
         _rag_chain = build_rag_pipeline()
-    
+
     try:
         for chunk in _rag_chain.stream({
             "session_id": session_id,
@@ -162,5 +138,5 @@ def answer_question(question: str, chat_history: list = None, session_id: str = 
         }):
             yield getattr(chunk, "content", str(chunk))
     except Exception as e:
-        print(f"ERROR in RAG stream: {e}", flush=True)
+        print(f"STREAM ERROR: {e}", flush=True)
         yield f"Error: {e}"
