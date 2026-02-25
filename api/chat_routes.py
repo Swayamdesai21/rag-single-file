@@ -8,8 +8,10 @@ from fastapi.responses import StreamingResponse
 
 router = APIRouter()
 
-TEMP_DIR = "temp_uploads"
+# Use /tmp for Vercel/Serverless environments
+TEMP_DIR = "/tmp" if os.getenv("VERCEL") else "temp_uploads"
 os.makedirs(TEMP_DIR, exist_ok=True)
+
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".txt", ".md"}
 
