@@ -227,6 +227,8 @@ ANSWER:"""
 
     async def token_stream() -> AsyncGenerator[str, None]:
         try:
+            # DEBUG: emit what we have (remove after fixing)
+            yield f"[DEBUG chunks={len(chunks)} ctx_starts_with={context[:60]}]\n\n"
             async for chunk in chain.astream({"context": context, "question": req.question}):
                 yield getattr(chunk, "content", str(chunk))
         except Exception as e:
