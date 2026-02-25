@@ -2,9 +2,9 @@ from pathlib import Path
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import VectorParams, Distance
 from langchain_qdrant import QdrantVectorStore
-from app.config import COLLECTION_NAME, QDRANT_URL, QDRANT_API_KEY
+from app.config import COLLECTION_NAME, QDRANT_URL, QDRANT_API_KEY, EMBEDDING_DIMENSION
 
-VECTOR_SIZE = 384  # HuggingFace sentences-transformers/all-MiniLM-L6-v2
+VECTOR_SIZE = EMBEDDING_DIMENSION
 QDRANT_PATH = Path("qdrant_data")
 
 _client_instance = None
@@ -41,5 +41,6 @@ def get_vector_store(embedding_model, recreate: bool = False):
     return QdrantVectorStore(
         client=client,
         collection_name=COLLECTION_NAME,
-        embedding=embedding_model
+        embedding=embedding_model,
+        metadata_payload_key="metadata" # Explicitly define where metadata goes
     )

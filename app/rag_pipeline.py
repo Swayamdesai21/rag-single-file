@@ -6,7 +6,7 @@ from app.llm import get_llm
 from app.config import TOP_K
 from qdrant_client.http import models as rest
 
-# Global instances
+# Global instances for lazy initialization
 _embedding_model = None
 _vector_store = None
 _llm = None
@@ -15,7 +15,6 @@ _rag_chain = None
 def get_shared_components():
     global _embedding_model, _vector_store, _llm
     if _embedding_model is None:
-        print("DEBUG: Initializing Shared RAG Components...", flush=True)
         _embedding_model = get_embedding_model()
         _vector_store = get_vector_store(_embedding_model)
         _llm = get_llm()
@@ -24,7 +23,8 @@ def get_shared_components():
 def format_docs(docs):
     if not docs:
         return "NO_DOCUMENTS_UPLOADED_FOR_THIS_CHAT"
-    return "\n\n".join(doc.page_content for doc in docs)
+    # Join documents with clear separators
+    return "\n\n---\n\n".join(doc.page_content for doc in docs)
 
 def format_chat_history(history):
     if not history: return ""
@@ -39,8 +39,8 @@ def build_rag_pipeline():
     emb, vs, llm = get_shared_components()
     
     prompt = ChatPromptTemplate.from_template(
-        """You are a professional AI assistant. Answer the question based ONLY on the context.
-If the context says 'NO_DOCUMENTS_UPLOADED_FOR_THIS_CHAT', tell the user to upload a file first.
+        """You are a highly capable AI assistant. Answer the question using the provided context.
+If the context is empty or says 'NO_DOCUMENTS_UPLOADED_FOR_THIS_CHAT', politely explain that the user needs to upload a document first.
 
 CONTEXT:
 {context}
@@ -55,58 +55,46 @@ ANSWER:"""
     )
 
     def get_dynamic_context(input_data):
-        session_id_val = input_data.get("session_id", "default")
-        session_id = str(session_id_val)
+        session_id = str(input_data.get("session_id", "default"))
         question = input_data["question"]
-        
         print(f"DEBUG: Retrieval Attempt - Session: {session_id}, Question: {question}", flush=True)
 
         try:
-            # DESPERATE FILTERING:
-            # 1. Try 'metadata.session_id' as string
-            # 2. Try 'metadata.session_id' as integer (if numeric)
-            # 3. Try top-level 'session_id'
+            # SUPER BROAD FILTER: Search everywhere session_id might be hidden
+            qdrant_filter = rest.Filter(
+                should=[
+                    rest.FieldCondition(key="session_id", match=rest.MatchValue(value=session_id)),
+                    rest.FieldCondition(key="metadata.session_id", match=rest.MatchValue(value=session_id)),
+                    rest.FieldCondition(key="metadata.metadata.session_id", match=rest.MatchValue(value=session_id))
+                ]
+            )
             
-            conditions = [
-                rest.FieldCondition(key="metadata.session_id", match=rest.MatchValue(value=session_id)),
-                rest.FieldCondition(key="session_id", match=rest.MatchValue(value=session_id))
-            ]
-            
-            # If the session_id is a numeric string, also try matching as integer
-            if session_id.isdigit():
-                try:
-                    num_id = int(session_id)
-                    conditions.append(rest.FieldCondition(key="metadata.session_id", match=rest.MatchValue(value=num_id)))
-                    conditions.append(rest.FieldCondition(key="session_id", match=rest.MatchValue(value=num_id)))
-                except: pass
-
-            qdrant_filter = rest.Filter(should=conditions)
-            
-            # Use k=TOP_K
+            # Step 1: Try strict filtered search
             docs = vs.similarity_search(question, k=TOP_K, filter=qdrant_filter)
-            print(f"DEBUG: Step 1 - Found {len(docs)} docs for {session_id}", flush=True)
+            print(f"DEBUG: Standard search found {len(docs)} docs", flush=True)
             
-            # FATAL FALLBACK: If nothing found with similarity, try finding ANY doc for this session
-            if not docs:
-                print(f"DEBUG: Step 2 - Zero matches, trying 'ANY DOC' fallback...", flush=True)
-                # Search with empty string and k=3 to get at least something
-                docs = vs.similarity_search(" ", k=3, filter=qdrant_filter)
-                print(f"DEBUG: Step 2 - Fallback found {len(docs)} docs", flush=True)
-            
-            # FINAL CHECK: If still nothing, check if the collection is even populated
-            if not docs:
-                all_points = vs.client.scroll(collection_name=vs.collection_name, limit=1)[0]
-                if not all_points:
-                    print(f"CRITICAL: Collection {vs.collection_name} is COMPLETELY EMPTY!", flush=True)
+            # Step 2: Fallback - Search for everything in this session (ignore query relevance)
+            if not docs or len(docs) == 0:
+                print(f"DEBUG: No docs for this session found via similarity. Trying 'Retrieve All' for session...", flush=True)
+                # Query with empty space to match everything, but keep the session filter
+                docs = vs.similarity_search(" ", k=5, filter=qdrant_filter)
+                print(f"DEBUG: 'Retrieve All' fallback found {len(docs)} docs", flush=True)
+
+            # Step 3: Extreme Diagnostic - Search the WHOLE collection (no session filter)
+            # Only do this to log what's actually in the DB if we are still getting 0
+            if not docs or len(docs) == 0:
+                print("DEBUG: EXTREME CHECK - Searching WHOLE collection without filters...", flush=True)
+                all_data = vs.similarity_search(" ", k=1)
+                if all_data:
+                    found_payload = all_data[0].metadata
+                    print(f"DIAGNOSTIC: Found data for a DIFFERENT session! Stored ID is: {found_payload.get('session_id')}", flush=True)
                 else:
-                    first_payload = all_points[0].payload
-                    print(f"CRITICAL: Found other data ID={all_points[0].id}, Payload keys: {list(first_payload.keys())}", flush=True)
-                    print(f"CRITICAL: Session mismatch. Database has session {first_payload.get('metadata', {}).get('session_id')} but searched for {session_id}", flush=True)
+                    print("DIAGNOSTIC: The collection is COMPLETELY EMPTY!", flush=True)
 
             return format_docs(docs)
         except Exception as e:
-            print(f"ERROR in context retrieval: {str(e)}", flush=True)
-            return "NO_DOCUMENTS_UPLOADED_FOR_THIS_CHAT"
+            print(f"ERROR in context retrieval: {e}", flush=True)
+            return f"Error connecting to knowledge base: {str(e)}"
 
     return ({
         "context": RunnableLambda(get_dynamic_context),
@@ -120,7 +108,6 @@ def reset_rag_pipeline():
     _embedding_model = None
     _vector_store = None
     _llm = None
-    print("DEBUG: Full Pipeline Reset performed.", flush=True)
 
 def answer_question(question: str, chat_history: list = None, session_id: str = "default"):
     global _rag_chain
@@ -128,7 +115,6 @@ def answer_question(question: str, chat_history: list = None, session_id: str = 
         _rag_chain = build_rag_pipeline()
     
     try:
-        # Pass data through chain
         for chunk in _rag_chain.stream({
             "session_id": session_id,
             "question": question,
@@ -136,5 +122,5 @@ def answer_question(question: str, chat_history: list = None, session_id: str = 
         }):
             yield getattr(chunk, "content", str(chunk))
     except Exception as e:
-        print(f"STREAM ERROR: {e}", flush=True)
-        yield f"Error: {e}"
+        print(f"ERROR in RAG chain: {e}", flush=True)
+        yield f"Error generating response: {e}"
