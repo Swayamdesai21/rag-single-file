@@ -28,9 +28,11 @@ if LLM_PROVIDER == "groq" and not GROQ_API_KEY:
 # -------------------------
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "huggingface")
 
-# HuggingFace embeddings (local, free)
+# HuggingFace configurations
 HF_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_DIMENSION = 384
+HUGGINGFACEHUB_API_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+
 
 # -------------------------
 # Chunking Configuration

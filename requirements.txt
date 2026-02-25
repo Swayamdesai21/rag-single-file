@@ -2,7 +2,6 @@ langchain>=0.3.0
 langchain-community>=0.3.0
 langchain-openai
 langchain-text-splitters
-langchain-huggingface
 langchain-groq
 langchain-qdrant
 qdrant-client
@@ -10,11 +9,8 @@ pypdf
 python-dotenv
 tiktoken
 fastapi
-uvicorn 
 pydantic
 python-multipart
-sentence-transformers
 docx2txt
 python-pptx
-unstructured
 pylev

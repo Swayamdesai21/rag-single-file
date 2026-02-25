@@ -22,8 +22,10 @@ When deploying on Vercel, add the following Environment Variables in the Vercel 
 | `GROQ_API_KEY` | Your Groq API Key |
 | `QDRANT_URL` | Your Qdrant Cloud Cluster URL (e.g., `https://...cloud.qdrant.io`) |
 | `QDRANT_API_KEY` | Your Qdrant Cloud API Key |
+| `HUGGINGFACEHUB_API_TOKEN` | (Required for Vercel) Your Hugging Face API Token. Get it [here](https://huggingface.co/settings/tokens). |
 | `LLM_PROVIDER` | Set to `groq` |
 | `EMBEDDING_PROVIDER` | Set to `huggingface` |
+
 
 ### 3. Deploying
 You can deploy using the Vercel CLI or by connecting your GitHub repository.
