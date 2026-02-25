@@ -204,15 +204,22 @@ async def upload(session_id: str, file: UploadFile = File(...)):
 async def chat(req: ChatRequest):
     session_id = str(req.session_id)
 
-    # Retrieve OUTSIDE the generator to catch errors early
+    # Retrieve context OUTSIDE the generator
     chunks = retrieve_chunks(session_id)
-    context = "\n\n---\n\n".join(chunks[:8]) if chunks else "NO_DOCUMENTS_UPLOADED_FOR_THIS_CHAT"
+    print(f"CHAT: session='{session_id}' chunks_found={len(chunks)}", flush=True)
 
-    print(f"CHAT: session='{session_id}' chunks={len(chunks)} context_len={len(context)}", flush=True)
+    # Handle no-docs case BEFORE calling LLM — prevents hallucination of the sentinel string
+    if not chunks:
+        async def no_docs_stream() -> AsyncGenerator[str, None]:
+            yield "It looks like no document has been uploaded for this chat session. Please upload a document using the **Upload & Index** button, then ask your question again."
+        return StreamingResponse(no_docs_stream(), media_type="text/plain")
 
+    context = "\n\n---\n\n".join(chunks[:8])
+
+    # Clean prompt that only instructs what to do WITH context (no sentinel strings)
     prompt = ChatPromptTemplate.from_template(
-        """You are a helpful AI assistant. Answer the QUESTION using only the CONTEXT.
-If CONTEXT is 'NO_DOCUMENTS_UPLOADED_FOR_THIS_CHAT', tell user to upload a document first.
+        """You are a helpful AI assistant. Use the CONTEXT below to answer the QUESTION accurately and concisely.
+Cite relevant parts of the context in your answer.
 
 CONTEXT:
 {context}
@@ -227,8 +234,6 @@ ANSWER:"""
 
     async def token_stream() -> AsyncGenerator[str, None]:
         try:
-            # DEBUG: emit what we have (remove after fixing)
-            yield f"[DEBUG chunks={len(chunks)} ctx_starts_with={context[:60]}]\n\n"
             async for chunk in chain.astream({"context": context, "question": req.question}):
                 yield getattr(chunk, "content", str(chunk))
         except Exception as e:
@@ -236,6 +241,7 @@ ANSWER:"""
             yield f"\n[Error: {e}]"
 
     return StreamingResponse(token_stream(), media_type="text/plain")
+
 
 
 @app.post("/debug-chat")
