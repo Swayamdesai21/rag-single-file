@@ -79,9 +79,7 @@ def retrieve_chunks(session_id: str) -> list:
     sid = str(session_id)
     try:
         client = new_qclient()
-        # Check collection exists
         cols = [c.name for c in client.get_collections().collections]
-        print(f"RETRIEVE: Collections available: {cols}", flush=True)
         if COLLECTION not in cols:
             print(f"RETRIEVE: Collection '{COLLECTION}' not found!", flush=True)
             return []
@@ -92,16 +90,15 @@ def retrieve_chunks(session_id: str) -> list:
             with_payload=True,
             with_vectors=False
         )
-        all_ids = list(set(str(p.payload.get("session_id","?")) for p in all_pts))
-        print(f"RETRIEVE: Total points={len(all_pts)}, all session_ids={all_ids}", flush=True)
 
         matched = [
             p.payload.get("text","")
             for p in all_pts
             if str(p.payload.get("session_id","")) == sid
         ]
+        matched = [m for m in matched if m.strip()]
         print(f"RETRIEVE: Found {len(matched)} chunks for session='{sid}'", flush=True)
-        return [m for m in matched if m.strip()]
+        return matched
 
     except Exception as e:
         print(f"RETRIEVE ERROR: {traceback.format_exc()}", flush=True)
@@ -110,6 +107,57 @@ def retrieve_chunks(session_id: str) -> list:
 # ─── LLM ──────────────────────────────────────────────────────────────────────
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
+import re
+
+# Common English stop-words to ignore when extracting keywords
+_STOP = {
+    "a","an","the","is","are","was","were","be","been","being","have","has","had",
+    "do","does","did","will","would","could","should","may","might","must","can",
+    "in","on","at","to","for","of","and","or","but","if","with","that","this",
+    "what","which","who","how","when","where","me","my","i","you","your","it",
+    "its","give","tell","explain","show","list","describe","about","please","need",
+    "want","find","get","information","details","related","regarding","subject",
+    "course","their","there","then","than","they","them","these","those","from"
+}
+
+def rank_chunks_by_relevance(chunks: list, question: str, top_k: int = 12) -> list:
+    """
+    Score every chunk by keyword frequency and return the top_k most relevant.
+    Uses BM25-style term-frequency scoring — no external API needed.
+    """
+    # Extract meaningful keywords from the question
+    words = re.findall(r'\b\w+\b', question.lower())
+    keywords = [w for w in words if w not in _STOP and len(w) > 2]
+
+    if not keywords:
+        print("RANK: No meaningful keywords — returning first chunks", flush=True)
+        return chunks[:top_k]
+
+    def score(chunk: str) -> float:
+        text = chunk.lower()
+        total = 0.0
+        for kw in keywords:
+            count = text.count(kw)
+            if count > 0:
+                # TF-style: more occurrences = higher score, diminishing returns
+                total += 1 + (count * 2)
+        return total
+
+    scored = [(score(c), c) for c in chunks]
+    scored.sort(key=lambda x: x[0], reverse=True)
+
+    # Log top matches for debugging
+    top_scores = [(round(s, 1), c[:60]) for s, c in scored[:3]]
+    print(f"RANK: keywords={keywords}, top_scores={top_scores}", flush=True)
+
+    # Return chunks that scored > 0 first; fall back to top_k if all score 0
+    ranked = [c for s, c in scored if s > 0]
+    if not ranked:
+        print("RANK: No keyword matches — returning first chunks as fallback", flush=True)
+        return chunks[:top_k]
+
+    return ranked[:top_k]
+
 
 def build_llm():
     return ChatGroq(
@@ -240,22 +288,27 @@ async def upload(session_id: str, file: UploadFile = File(...)):
 async def chat(req: ChatRequest):
     session_id = str(req.session_id)
 
-    # Retrieve context OUTSIDE the generator
-    chunks = retrieve_chunks(session_id)
-    print(f"CHAT: session='{session_id}' chunks_found={len(chunks)}", flush=True)
+    # 1. Retrieve ALL chunks for this session from Qdrant
+    all_chunks = retrieve_chunks(session_id)
+    print(f"CHAT: session='{session_id}' total_chunks={len(all_chunks)}", flush=True)
 
-    # Handle no-docs case BEFORE calling LLM — prevents hallucination of the sentinel string
-    if not chunks:
+    # 2. Handle no-docs case BEFORE calling LLM — avoids hallucination
+    if not all_chunks:
         async def no_docs_stream() -> AsyncGenerator[str, None]:
             yield "It looks like no document has been uploaded for this chat session. Please upload a document using the **Upload & Index** button, then ask your question again."
         return StreamingResponse(no_docs_stream(), media_type="text/plain")
 
-    context = "\n\n---\n\n".join(chunks[:8])
+    # 3. Rank chunks by keyword relevance to this specific question
+    #    For large PDFs (200+ pages), this finds the right page instead of returning first 8.
+    top_chunks = rank_chunks_by_relevance(all_chunks, req.question, top_k=12)
+    context = "\n\n---\n\n".join(top_chunks)
+    print(f"CHAT: Using {len(top_chunks)} ranked chunks for context", flush=True)
 
-    # Clean prompt that only instructs what to do WITH context (no sentinel strings)
+    # 4. Build prompt with only relevant context
     prompt = ChatPromptTemplate.from_template(
-        """You are a helpful AI assistant. Use the CONTEXT below to answer the QUESTION accurately and concisely.
-Cite relevant parts of the context in your answer.
+        """You are a helpful AI assistant. Use ONLY the CONTEXT below to answer the QUESTION.
+Be specific and cite the exact information from the context.
+If the answer is not in the context, say "I couldn't find this in the uploaded document."
 
 CONTEXT:
 {context}
@@ -277,6 +330,7 @@ ANSWER:"""
             yield f"\n[Error: {e}]"
 
     return StreamingResponse(token_stream(), media_type="text/plain")
+
 
 
 
