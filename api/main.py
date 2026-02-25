@@ -174,6 +174,42 @@ async def debug_retrieve(session_id: str):
     }
 
 
+# ─── UPLOAD TEXT (client-side extracted — no file size limit) ──────────────────
+class TextUploadRequest(BaseModel):
+    session_id: str
+    text: str
+    filename: str = "document.txt"
+
+@app.post("/upload-text")
+async def upload_text(req: TextUploadRequest):
+    """
+    Accepts text extracted client-side (e.g., by PDF.js in the browser).
+    No request body size limit for the PDF itself — only the text is sent.
+    Works for any size PDF.
+    """
+    if not GROQ_KEY or not QDRANT_URL:
+        raise HTTPException(400, "Missing environment variables")
+    if not req.text or len(req.text.strip()) < 10:
+        raise HTTPException(400, "No meaningful text content provided")
+
+    try:
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
+        raw_chunks = splitter.split_text(req.text)
+        if not raw_chunks:
+            return {"chunks": 0, "message": "No content to index"}
+
+        # Build pseudo-documents
+        from langchain_core.documents import Document
+        docs = [Document(page_content=c) for c in raw_chunks]
+
+        n = store_chunks(docs, str(req.session_id))
+        return {"chunks": n, "message": f"Successfully indexed {n} chunks for session {req.session_id}"}
+
+    except Exception as e:
+        print(f"UPLOAD-TEXT ERROR:\n{traceback.format_exc()}", flush=True)
+        raise HTTPException(500, f"Text indexing failed: {str(e)}")
+
+
 # ─── UPLOAD ────────────────────────────────────────────────────────────────────
 @app.post("/upload")
 async def upload(session_id: str, file: UploadFile = File(...)):
