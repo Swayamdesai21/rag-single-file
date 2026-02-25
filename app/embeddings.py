@@ -1,60 +1,103 @@
-from langchain_community.embeddings import HuggingFaceInferenceAPIEmbeddings
-from app.config import HF_EMBEDDING_MODEL, HUGGINGFACEHUB_API_TOKEN
-from typing import List
+import os
+import requests
 import time
+from typing import List
+from app.config import HF_EMBEDDING_MODEL, HUGGINGFACEHUB_API_TOKEN
 
-class SafeHFInferenceEmbeddings(HuggingFaceInferenceAPIEmbeddings):
+class SafeHFInferenceEmbeddings:
+    """
+    A robust, manual implementation of Hugging Face Inference API embeddings.
+    This avoids issues with library-specific URL construction and provides
+    better error handling for Vercel/Serverless environments.
+    """
+    def __init__(self, api_key: str, model_name: str):
+        self.api_key = api_key
+        self.model_name = model_name
+        # The new router endpoint as requested by the HF error message
+        self.api_url = f"https://router.huggingface.co/models/{model_name}"
+        self.headers = {"Authorization": f"Bearer {api_key}"}
+
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        """Retry logic for 'model loading' and clear error reporting."""
+        if not texts:
+            return []
+
         max_retries = 3
         for i in range(max_retries):
             try:
-                res = super().embed_documents(texts)
+                response = requests.post(
+                    self.api_url,
+                    headers=self.headers,
+                    json={"inputs": texts, "options": {"wait_for_model": True}},
+                    timeout=20
+                )
                 
-                # If the result is a dict (like {'error': '...'}), this will help us see it
-                if isinstance(res, dict):
-                    error_msg = res.get("error", str(res))
-                    if "currently loading" in error_msg.lower() and i < max_retries - 1:
-                        print(f"DEBUG: HF Model is loading (attempt {i+1})...", flush=True)
-                        time.sleep(5)
-                        continue
-                    raise ValueError(f"Hugging Face API Error: {error_msg}")
+                # Check for 404 (wrong model named/url) or other errors
+                if response.status_code == 404:
+                    # Fallback to the older endpoint if the router fails with 404
+                    fallback_url = f"https://api-inference.huggingface.co/models/{self.model_name}"
+                    print(f"DEBUG: Router 404, trying fallback URL: {fallback_url}", flush=True)
+                    response = requests.post(
+                        fallback_url,
+                        headers=self.headers,
+                        json={"inputs": texts, "options": {"wait_for_model": True}},
+                        timeout=20
+                    )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    if isinstance(data, list):
+                        return data
+                    elif isinstance(data, dict) and "error" in data:
+                        error_msg = data.get("error", "")
+                        if "loading" in error_msg.lower() and i < max_retries - 1:
+                            print(f"DEBUG: Model loading, retry {i+1}...", flush=True)
+                            time.sleep(5)
+                            continue
+                        raise ValueError(f"HF API Error: {error_msg}")
+                    else:
+                        raise ValueError(f"Unexpected HF response format: {data}")
                 
-                # Ensure it's a list and not empty
-                if not isinstance(res, list) or len(res) == 0:
-                    raise ValueError(f"Invalid response format from HF API: {res}")
+                # If we get a non-200 but it's not a loading error
+                print(f"DEBUG: HF API Status {response.status_code}, Body: {response.text[:200]}", flush=True)
                 
-                return res
+                if i < max_retries - 1:
+                    time.sleep(2)
+                    continue
+                
+                raise ValueError(f"HF API Failed (Status {response.status_code}): {response.text[:200]}")
+
+            except requests.exceptions.JSONDecodeError:
+                if i < max_retries - 1:
+                    print("DEBUG: JSON Decode Error (likely empty response), retrying...", flush=True)
+                    time.sleep(2)
+                    continue
+                raise ValueError("HF API returned non-JSON response. Check your API Token and Model accessibility.")
             except Exception as e:
-                # Catch the specific KeyError: 0 which happens when it returns a dict
-                err_str = str(e)
-                if ("0" in err_str or "loading" in err_str.lower()) and i < max_retries - 1:
-                    print(f"DEBUG: HF API returned unexpected format or loading, retrying...", flush=True)
-                    time.sleep(5)
+                if i < max_retries - 1:
+                    time.sleep(2)
                     continue
                 raise e
+        
         return []
 
     def embed_query(self, text: str) -> List[float]:
-        return self.embed_documents([text])[0]
+        res = self.embed_documents([text])
+        if res and len(res) > 0:
+            return res[0]
+        return []
+
+    # These help LangChain treat this as a valid embedding object
+    def __call__(self, texts: List[str]) -> List[List[float]]:
+        return self.embed_documents(texts)
 
 def get_embedding_model():
     if HUGGINGFACEHUB_API_TOKEN:
-        print("DEBUG: Using Safe Hugging Face Inference API wrapper (Router)", flush=True)
+        print("DEBUG: Using Manual Robust HF Inference implementation", flush=True)
         return SafeHFInferenceEmbeddings(
             api_key=HUGGINGFACEHUB_API_TOKEN,
-            model_name=HF_EMBEDDING_MODEL,
-            # Using the new router endpoint as requested by the error message
-            api_url="https://router.huggingface.co/hf-inference/v1"
+            model_name=HF_EMBEDDING_MODEL
         )
     else:
-        print("DEBUG: Using Local HF embeddings (Fallback)", flush=True)
-        try:
-            from langchain_huggingface import HuggingFaceEmbeddings
-            return HuggingFaceEmbeddings(
-                model_name=HF_EMBEDDING_MODEL,
-                model_kwargs={'device': 'cpu'},
-                encode_kwargs={'normalize_embeddings': True}
-            )
-        except ImportError:
-            raise ImportError("HuggingFaceHUB_API_TOKEN missing and 'langchain-huggingface' not installed.")
+        print("DEBUG: Fallback to local (Will fail on Vercel)", flush=True)
+        from langchain_huggingface import HuggingFaceEmbeddings
+        return HuggingFaceEmbeddings(model_name=HF_EMBEDDING_MODEL)
