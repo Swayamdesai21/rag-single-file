@@ -6,10 +6,22 @@ from app.llm import get_llm
 from app.config import TOP_K
 from qdrant_client.http import models as rest
 
-# Initialize components
-_embedding_model = get_embedding_model()
-_vector_store = get_vector_store(_embedding_model)
-_llm = get_llm()
+# Global instances for lazy initialization
+_embedding_model = None
+_vector_store = None
+_llm = None
+_rag_chain = None
+
+def get_shared_components():
+    """Lazily initialize RAG components to prevent crash on import."""
+    global _embedding_model, _vector_store, _llm
+    if _embedding_model is None:
+        _embedding_model = get_embedding_model()
+    if _vector_store is None:
+        _vector_store = get_vector_store(_embedding_model)
+    if _llm is None:
+        _llm = get_llm()
+    return _embedding_model, _vector_store, _llm
 
 def format_docs(docs):
     if not docs:
@@ -26,6 +38,8 @@ def format_chat_history(history):
     return "\n".join(formatted)
 
 def build_rag_pipeline():
+    emb, vs, llm = get_shared_components()
+    
     prompt = ChatPromptTemplate.from_template(
         """You are a highly capable AI assistant. Your goal is to provide accurate, well-structured, and easy-to-read answers based ONLY on the provided context.
 
@@ -48,7 +62,6 @@ QUESTION:
 ANSWER:"""
     )
 
-
     def get_dynamic_context(input_data):
         session_id = str(input_data.get("session_id", "default"))
         question = input_data["question"]
@@ -65,12 +78,11 @@ ANSWER:"""
                 ]
             )
             
-            docs = _vector_store.similarity_search(question, k=TOP_K, filter=qdrant_filter)
+            docs = vs.similarity_search(question, k=TOP_K, filter=qdrant_filter)
             print(f"DEBUG: Found {len(docs)} documents with filter", flush=True)
             
             if not docs:
-                # Fallback: check if ANY docs exist for this session
-                all_session_docs = _vector_store.similarity_search("", k=1, filter=qdrant_filter)
+                all_session_docs = vs.similarity_search("", k=1, filter=qdrant_filter)
                 if all_session_docs:
                     print(f"DEBUG: Found documents for this session, but none matched the query well.", flush=True)
                 else:
@@ -85,9 +97,7 @@ ANSWER:"""
         "context": RunnableLambda(get_dynamic_context),
         "question": RunnableLambda(lambda x: x["question"]),
         "chat_history": RunnableLambda(lambda x: format_chat_history(x.get("chat_history", []))),
-    } | prompt | _llm)
-
-_rag_chain = None
+    } | prompt | llm)
 
 def reset_rag_pipeline():
     global _rag_chain
