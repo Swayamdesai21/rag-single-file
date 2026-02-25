@@ -1,13 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { uploadFile } from "../api/chatApi";
 
 export default function FileUpload({ conversationId, activeFile, onUploadSuccess }) {
     const [file, setFile] = useState(null);
-    const [status, setStatus] = useState("idle");
+    const [status, setStatus] = useState("idle"); // idle, uploading, success, error
     const [errorMsg, setErrorMsg] = useState("");
 
     const handleFileChange = (e) => {
-        if (e.target.files && e.target.files[0]) {
+        if (e.target.files.length > 0) {
             setFile(e.target.files[0]);
             setStatus("idle");
             setErrorMsg("");
@@ -15,29 +15,31 @@ export default function FileUpload({ conversationId, activeFile, onUploadSuccess
     };
 
     const handleUpload = async () => {
-        if (!file) return;
-        if (!conversationId) {
-            setErrorMsg("Please select or create a chat first.");
-            return;
-        }
+        if (!file || !conversationId) return;
 
         setStatus("uploading");
         setErrorMsg("");
 
         try {
-            const result = await uploadFile(file, conversationId);
+            await uploadFile(file, conversationId);
             setStatus("success");
             onUploadSuccess(file.name);
         } catch (error) {
-            console.error(error);
+            console.error("Upload error details:", error);
             setStatus("error");
 
-            // Extract detailed error message if available
-            const errorDetail = error.response?.data?.detail || error.message || "Upload failed. Please try again.";
+            let errorDetail = "Upload failed. Please try again.";
+            if (error.response?.data?.detail) {
+                errorDetail = typeof error.response.data.detail === "string"
+                    ? error.response.data.detail
+                    : JSON.stringify(error.response.data.detail);
+            } else if (error.message) {
+                errorDetail = error.message;
+            }
+
             setErrorMsg(errorDetail);
         }
     };
-
 
     // Construct the display message
     const displayMessage = activeFile
@@ -45,7 +47,6 @@ export default function FileUpload({ conversationId, activeFile, onUploadSuccess
         : status === "uploading"
             ? "Indexing document..."
             : errorMsg;
-
 
     return (
         <div
@@ -110,12 +111,17 @@ export default function FileUpload({ conversationId, activeFile, onUploadSuccess
                     style={{
                         padding: "6px 12px",
                         borderRadius: "6px",
-                        fontSize: "13px",
-                        backgroundColor: activeFile ? "rgba(16, 185, 129, 0.1)" : "transparent",
+                        fontSize: "12px",
+                        backgroundColor: activeFile ? "rgba(16, 185, 129, 0.1)" : status === "error" ? "rgba(239, 68, 68, 0.1)" : "transparent",
                         color: activeFile ? "var(--accent)" : status === "error" ? "#ef4444" : "var(--text-muted)",
                         marginLeft: "auto",
                         fontWeight: "500",
-                        border: activeFile ? "1px solid var(--accent)" : "none"
+                        border: activeFile ? "1px solid var(--accent)" : status === "error" ? "1px solid #ef4444" : "none",
+                        maxWidth: "400px",
+                        maxHeight: "60px",
+                        overflowY: "auto",
+                        whiteSpace: "pre-wrap",
+                        textAlign: "left"
                     }}
                 >
                     {displayMessage}
