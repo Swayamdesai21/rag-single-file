@@ -13,10 +13,8 @@ def get_qdrant_client():
     global _client_instance
     if _client_instance is None:
         if QDRANT_URL:
-            # Connect to remote Qdrant (e.g. Qdrant Cloud)
             _client_instance = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
         else:
-            # Connect to local Qdrant
             _client_instance = QdrantClient(path=str(QDRANT_PATH))
     return _client_instance
 
@@ -41,6 +39,6 @@ def get_vector_store(embedding_model, recreate: bool = False):
     return QdrantVectorStore(
         client=client,
         collection_name=COLLECTION_NAME,
-        embedding=embedding_model,
-        metadata_payload_key="metadata" # Explicitly define where metadata goes
+        embedding=embedding_model
+        # Removed explicit metadata_payload_key to return to standard LangChain behavior
     )

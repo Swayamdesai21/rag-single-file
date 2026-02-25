@@ -6,7 +6,7 @@ from app.llm import get_llm
 from app.config import TOP_K
 from qdrant_client.http import models as rest
 
-# Global instances for lazy initialization
+# Global instances
 _embedding_model = None
 _vector_store = None
 _llm = None
@@ -23,7 +23,6 @@ def get_shared_components():
 def format_docs(docs):
     if not docs:
         return "NO_DOCUMENTS_UPLOADED_FOR_THIS_CHAT"
-    # Join documents with clear separators
     return "\n\n---\n\n".join(doc.page_content for doc in docs)
 
 def format_chat_history(history):
@@ -39,8 +38,8 @@ def build_rag_pipeline():
     emb, vs, llm = get_shared_components()
     
     prompt = ChatPromptTemplate.from_template(
-        """You are a highly capable AI assistant. Answer the question using the provided context.
-If the context is empty or says 'NO_DOCUMENTS_UPLOADED_FOR_THIS_CHAT', politely explain that the user needs to upload a document first.
+        """You are a professional AI assistant. Answer the question using the provided context.
+If the context is 'NO_DOCUMENTS_UPLOADED_FOR_THIS_CHAT', politely tell the user to upload a file.
 
 CONTEXT:
 {context}
@@ -57,44 +56,54 @@ ANSWER:"""
     def get_dynamic_context(input_data):
         session_id = str(input_data.get("session_id", "default"))
         question = input_data["question"]
-        print(f"DEBUG: Retrieval Attempt - Session: {session_id}, Question: {question}", flush=True)
+        
+        print(f"DEBUG: RAG Step - Session: {session_id}, Question: {question}", flush=True)
 
         try:
-            # SUPER BROAD FILTER: Search everywhere session_id might be hidden
-            qdrant_filter = rest.Filter(
-                should=[
-                    rest.FieldCondition(key="session_id", match=rest.MatchValue(value=session_id)),
-                    rest.FieldCondition(key="metadata.session_id", match=rest.MatchValue(value=session_id)),
-                    rest.FieldCondition(key="metadata.metadata.session_id", match=rest.MatchValue(value=session_id))
-                ]
-            )
+            # BROAD PYTHON-SIDE FILTERING (Extremely Reliable)
+            # We fetch more documents than needed and filter them in Python to avoid Qdrant filter mismatches
+            all_docs = vs.similarity_search(question, k=20) 
             
-            # Step 1: Try strict filtered search
-            docs = vs.similarity_search(question, k=TOP_K, filter=qdrant_filter)
-            print(f"DEBUG: Standard search found {len(docs)} docs", flush=True)
+            # Filter docs for this session
+            filtered_docs = []
+            for doc in all_docs:
+                doc_session = str(doc.metadata.get("session_id", ""))
+                # Also check nested if present
+                if not doc_session and "metadata" in doc.metadata:
+                    doc_session = str(doc.metadata["metadata"].get("session_id", ""))
+                
+                if doc_session == session_id:
+                    filtered_docs.append(doc)
             
-            # Step 2: Fallback - Search for everything in this session (ignore query relevance)
-            if not docs or len(docs) == 0:
-                print(f"DEBUG: No docs for this session found via similarity. Trying 'Retrieve All' for session...", flush=True)
-                # Query with empty space to match everything, but keep the session filter
-                docs = vs.similarity_search(" ", k=5, filter=qdrant_filter)
-                print(f"DEBUG: 'Retrieve All' fallback found {len(docs)} docs", flush=True)
+            # If still nothing, try a broad "Retrieve All" for this session
+            if not filtered_docs:
+                print(f"DEBUG: No similarity matches. Trying Python-side session sweep...", flush=True)
+                # Scroll the collection
+                points, _ = vs.client.scroll(
+                    collection_name=vs.collection_name,
+                    limit=100,
+                    with_payload=True,
+                    with_vectors=False
+                )
+                
+                for p in points:
+                    p_session = str(p.payload.get("session_id") or p.payload.get("metadata", {}).get("session_id", ""))
+                    if p_session == session_id:
+                        from langchain_core.documents import Document
+                        filtered_docs.append(Document(
+                            page_content=p.payload.get("page_content", ""),
+                            metadata=p.payload.get("metadata", p.payload)
+                        ))
+                
+                # Keep only top bits
+                filtered_docs = filtered_docs[:TOP_K]
 
-            # Step 3: Extreme Diagnostic - Search the WHOLE collection (no session filter)
-            # Only do this to log what's actually in the DB if we are still getting 0
-            if not docs or len(docs) == 0:
-                print("DEBUG: EXTREME CHECK - Searching WHOLE collection without filters...", flush=True)
-                all_data = vs.similarity_search(" ", k=1)
-                if all_data:
-                    found_payload = all_data[0].metadata
-                    print(f"DIAGNOSTIC: Found data for a DIFFERENT session! Stored ID is: {found_payload.get('session_id')}", flush=True)
-                else:
-                    print("DIAGNOSTIC: The collection is COMPLETELY EMPTY!", flush=True)
-
-            return format_docs(docs)
+            print(f"DEBUG: Final retrieval found {len(filtered_docs)} docs for session {session_id}", flush=True)
+            return format_docs(filtered_docs)
+            
         except Exception as e:
-            print(f"ERROR in context retrieval: {e}", flush=True)
-            return f"Error connecting to knowledge base: {str(e)}"
+            print(f"ERROR in context retrieval: {str(e)}", flush=True)
+            return "NO_DOCUMENTS_UPLOADED_FOR_THIS_CHAT"
 
     return ({
         "context": RunnableLambda(get_dynamic_context),
@@ -122,5 +131,5 @@ def answer_question(question: str, chat_history: list = None, session_id: str = 
         }):
             yield getattr(chunk, "content", str(chunk))
     except Exception as e:
-        print(f"ERROR in RAG chain: {e}", flush=True)
-        yield f"Error generating response: {e}"
+        print(f"STREAM ERROR: {e}", flush=True)
+        yield f"Error: {e}"
