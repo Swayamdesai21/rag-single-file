@@ -208,6 +208,8 @@ async def chat(req: ChatRequest):
     chunks = retrieve_chunks(session_id)
     context = "\n\n---\n\n".join(chunks[:8]) if chunks else "NO_DOCUMENTS_UPLOADED_FOR_THIS_CHAT"
 
+    print(f"CHAT: session='{session_id}' chunks={len(chunks)} context_len={len(context)}", flush=True)
+
     prompt = ChatPromptTemplate.from_template(
         """You are a helpful AI assistant. Answer the QUESTION using only the CONTEXT.
 If CONTEXT is 'NO_DOCUMENTS_UPLOADED_FOR_THIS_CHAT', tell user to upload a document first.
@@ -232,3 +234,17 @@ ANSWER:"""
             yield f"\n[Error: {e}]"
 
     return StreamingResponse(token_stream(), media_type="text/plain")
+
+
+@app.post("/debug-chat")
+async def debug_chat(req: ChatRequest):
+    """Non-streaming version that returns JSON showing what retrieve_chunks found."""
+    session_id = str(req.session_id)
+    chunks = retrieve_chunks(session_id)
+    return {
+        "session_id": session_id,
+        "chunks_found": len(chunks),
+        "context_preview": chunks[0][:300] if chunks else None,
+        "will_answer": len(chunks) > 0
+    }
+
