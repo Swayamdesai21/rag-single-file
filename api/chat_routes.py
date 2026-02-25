@@ -5,7 +5,8 @@ import traceback
 import json
 from app.rag_pipeline import answer_question, reset_rag_pipeline
 from app.ingester import ingest_file
-from app.config import check_config
+from app.config import check_config, COLLECTION_NAME
+from app.vector_store import get_qdrant_client
 from api.schemas import ChatRequest, ChatResponse
 from fastapi.responses import StreamingResponse
 
@@ -20,12 +21,48 @@ SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".txt", ".md"}
 @router.get("/health")
 async def health():
     config_errors = check_config()
+    db_info = "Not checked"
+    try:
+        client = get_qdrant_client()
+        collections = [c.name for c in client.get_collections().collections]
+        db_info = f"Collections: {collections}"
+    except Exception as e:
+        db_info = f"Database Error: {str(e)}"
+
     return {
         "status": "ok" if not config_errors else "unconfigured",
         "config_errors": config_errors,
         "environment": "vercel" if os.getenv("VERCEL") else "local",
-        "temp_writable": os.access(TEMP_DIR, os.W_OK)
+        "database": db_info
     }
+
+@router.get("/inspect/{session_id}")
+async def inspect(session_id: str):
+    """Debug endpoint to see if data exists for a session."""
+    try:
+        client = get_qdrant_client()
+        points, _ = client.scroll(
+            collection_name=COLLECTION_NAME,
+            limit=10,
+            with_payload=True,
+            with_vectors=False
+        )
+        
+        all_points_summaries = []
+        for p in points:
+            all_points_summaries.append({
+                "id": p.id,
+                "payload_keys": list(p.payload.keys()),
+                "session_id_in_payload": p.payload.get("session_id") or p.payload.get("metadata", {}).get("session_id")
+            })
+
+        return {
+            "session_id_searched": session_id,
+            "total_points_checked": len(points),
+            "points": all_points_summaries
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 @router.post("/chat")
 async def chat(req: ChatRequest):

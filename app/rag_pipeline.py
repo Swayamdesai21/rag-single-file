@@ -65,34 +65,32 @@ ANSWER:"""
     def get_dynamic_context(input_data):
         session_id = str(input_data.get("session_id", "default"))
         question = input_data["question"]
-        print(f"DEBUG: Retrieval for session_id: {session_id}, question: {question}", flush=True)
+        print(f"DEBUG: RAG Step - Session: {session_id}, Question: {question}", flush=True)
 
         try:
-            # Use flexible filter: check both 'session_id' and 'metadata.session_id'
-            # Some LangChain versions nest it, some don't.
+            # BROAD FILTER: Some LangChain versions store session_id at different levels
+            # We check metadata.session_id, session_id, and metadata.metadata.session_id if needed
             qdrant_filter = rest.Filter(
                 should=[
-                    rest.FieldCondition(
-                        key="session_id",
-                        match=rest.MatchValue(value=session_id)
-                    ),
-                    rest.FieldCondition(
-                        key="metadata.session_id",
-                        match=rest.MatchValue(value=session_id)
-                    )
+                    rest.FieldCondition(key="metadata.session_id", match=rest.MatchValue(value=session_id)),
+                    rest.FieldCondition(key="session_id", match=rest.MatchValue(value=session_id)),
+                    # Catch-all: check if it's nested deep (some libraries do this)
+                    rest.FieldCondition(key="metadata.metadata.session_id", match=rest.MatchValue(value=session_id))
                 ]
             )
             
             docs = vs.similarity_search(question, k=TOP_K, filter=qdrant_filter)
             print(f"DEBUG: Found {len(docs)} documents for session {session_id}", flush=True)
-
             
-            if not docs:
-                all_session_docs = vs.similarity_search("", k=1, filter=qdrant_filter)
-                if all_session_docs:
-                    print(f"DEBUG: Found documents for this session, but none matched the query well.", flush=True)
+            if not docs or len(docs) == 0:
+                print(f"DEBUG: Falling back to verify IF ANY doc exists for session {session_id}", flush=True)
+                test_docs = vs.similarity_search(" ", k=1, filter=qdrant_filter)
+                if test_docs:
+                    print(f"DEBUG: Data EXISTS for session {session_id}, but match was too weak.", flush=True)
+                    # Use them anyway if desperate? No, let's just return what we found
+                    return format_docs(test_docs)
                 else:
-                    print(f"DEBUG: Absolutely no documents found for session_id: {session_id}", flush=True)
+                    print(f"DEBUG: Absolutely NO data found for session {session_id} in current collection.", flush=True)
             
             return format_docs(docs)
         except Exception as e:
@@ -106,8 +104,13 @@ ANSWER:"""
     } | prompt | llm)
 
 def reset_rag_pipeline():
-    global _rag_chain
+    """Force complete refresh of all components."""
+    global _rag_chain, _embedding_model, _vector_store, _llm
     _rag_chain = None
+    _embedding_model = None
+    _vector_store = None
+    _llm = None
+    print("DEBUG: RAG Pipeline and components RESET.", flush=True)
 
 def answer_question(question: str, chat_history: list = None, session_id: str = "default"):
     global _rag_chain
