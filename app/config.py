@@ -18,11 +18,11 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_LLM_MODEL = "llama-3.1-8b-instant"
 
 # -------------------------
-# Embedding Configuration
-# -------------------------
-HF_EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+# Embedding Configuration (Cloud-safe)
+HF_EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
 EMBEDDING_DIMENSION = 384
 HUGGINGFACEHUB_API_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+
 
 # -------------------------
 # Qdrant Configuration
