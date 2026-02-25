@@ -25,15 +25,16 @@ export default function FileUpload({ conversationId, activeFile, onUploadSuccess
         setErrorMsg("");
 
         try {
-            await uploadFile(file, conversationId);
+            const result = await uploadFile(file, conversationId);
             setStatus("success");
-            if (onUploadSuccess) {
-                onUploadSuccess(file.name);
-            }
+            onUploadSuccess(file.name);
         } catch (error) {
             console.error(error);
             setStatus("error");
-            setErrorMsg(error.response?.data?.detail || "Upload failed. Please try again.");
+
+            // Extract detailed error message if available
+            const errorDetail = error.response?.data?.detail || error.message || "Upload failed. Please try again.";
+            setErrorMsg(errorDetail);
         }
     };
 
