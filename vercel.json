@@ -18,7 +18,11 @@
     ],
     "rewrites": [
         {
-            "source": "/(chat|upload|health|inspect)(.*)",
+            "source": "/api/(.*)",
+            "destination": "/api/main.py"
+        },
+        {
+            "source": "/(chat|upload|health|inspect|debug-retrieve)(.*)",
             "destination": "/api/main.py"
         },
         {
