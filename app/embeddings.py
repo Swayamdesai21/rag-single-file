@@ -10,6 +10,7 @@ class SafeHFInferenceEmbeddings(HuggingFaceInferenceAPIEmbeddings):
         for i in range(max_retries):
             try:
                 res = super().embed_documents(texts)
+                
                 # If the result is a dict (like {'error': '...'}), this will help us see it
                 if isinstance(res, dict):
                     error_msg = res.get("error", str(res))
@@ -26,8 +27,9 @@ class SafeHFInferenceEmbeddings(HuggingFaceInferenceAPIEmbeddings):
                 return res
             except Exception as e:
                 # Catch the specific KeyError: 0 which happens when it returns a dict
-                if "0" in str(e) and i < max_retries - 1:
-                    print(f"DEBUG: HF API returned unexpected format (possibly loading), retrying...", flush=True)
+                err_str = str(e)
+                if ("0" in err_str or "loading" in err_str.lower()) and i < max_retries - 1:
+                    print(f"DEBUG: HF API returned unexpected format or loading, retrying...", flush=True)
                     time.sleep(5)
                     continue
                 raise e
@@ -38,10 +40,12 @@ class SafeHFInferenceEmbeddings(HuggingFaceInferenceAPIEmbeddings):
 
 def get_embedding_model():
     if HUGGINGFACEHUB_API_TOKEN:
-        print("DEBUG: Using Safe Hugging Face Inference API wrapper", flush=True)
+        print("DEBUG: Using Safe Hugging Face Inference API wrapper (Router)", flush=True)
         return SafeHFInferenceEmbeddings(
             api_key=HUGGINGFACEHUB_API_TOKEN,
-            model_name=HF_EMBEDDING_MODEL
+            model_name=HF_EMBEDDING_MODEL,
+            # Using the new router endpoint as requested by the error message
+            api_url="https://router.huggingface.co/hf-inference/v1"
         )
     else:
         print("DEBUG: Using Local HF embeddings (Fallback)", flush=True)
