@@ -20,31 +20,24 @@ export default function FileUpload({ conversationId, activeFile, onUploadSuccess
         if (!file || !conversationId) return;
 
         setErrorMsg("");
-        const ext = file.name.split(".").pop().toLowerCase();
 
         try {
-            // Step 1: Try to extract text client-side (PDF / TXT / MD)
-            if (["pdf", "txt", "md"].includes(ext)) {
-                setStatus("extracting");
-                setStatusMsg(`Extracting text from ${file.name}...`);
+            // Step 1: Extract text in the browser (PDF.js / JSZip / FileReader)
+            setStatus("extracting");
+            setStatusMsg(`Extracting text from ${file.name}...`);
 
-                const text = await extractTextFromFile(file);
+            const text = await extractTextFromFile(file);
 
-                if (!text || text.trim().length < 10) {
-                    throw new Error("Could not extract readable text from this file. Try a text-based PDF.");
-                }
-
-                // Step 2: Send extracted text to backend
-                setStatus("uploading");
-                setStatusMsg("Indexing document...");
-                await uploadText(text, file.name, conversationId);
-
-            } else {
-                // Step 2b: For DOCX/PPTX — server-side upload (usually small)
-                setStatus("uploading");
-                setStatusMsg("Uploading document...");
-                await uploadFile(file, conversationId);
+            if (!text || text.trim().length < 10) {
+                throw new Error(
+                    "Could not extract readable text. Make sure the file contains selectable text (not a scanned image)."
+                );
             }
+
+            // Step 2: Send extracted text to backend
+            setStatus("uploading");
+            setStatusMsg("Indexing document...");
+            await uploadText(text, file.name, conversationId);
 
             setStatus("success");
             setStatusMsg("");
@@ -65,6 +58,7 @@ export default function FileUpload({ conversationId, activeFile, onUploadSuccess
             setErrorMsg(detail);
         }
     };
+
 
     // Display message logic
     const displayMessage = activeFile
