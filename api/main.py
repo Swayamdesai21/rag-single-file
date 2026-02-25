@@ -163,6 +163,17 @@ async def inspect(session_id: str):
         "sample": matched[:3]
     }
 
+@app.get("/debug-retrieve/{session_id}")
+async def debug_retrieve(session_id: str):
+    """Calls retrieve_chunks directly and returns JSON — proves if function works."""
+    chunks = retrieve_chunks(session_id)
+    return {
+        "session_id": session_id,
+        "chunks_found": len(chunks),
+        "first_chunk_preview": chunks[0][:200] if chunks else None
+    }
+
+
 # ─── UPLOAD ────────────────────────────────────────────────────────────────────
 @app.post("/upload")
 async def upload(session_id: str, file: UploadFile = File(...)):
