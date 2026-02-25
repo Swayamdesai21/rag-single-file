@@ -8,13 +8,13 @@ from app.config import HF_EMBEDDING_MODEL, HUGGINGFACEHUB_API_TOKEN
 class SafeHFInferenceEmbeddings(Embeddings):
     """
     A robust, manual implementation of Hugging Face Inference API embeddings.
-    Inherits from LangChain Embeddings base class for strict type compatibility.
+    Strictly uses the new 'router' endpoint mandated by Hugging Face.
     """
     def __init__(self, api_key: str, model_name: str):
         self.api_key = api_key
         self.model_name = model_name
-        # Using the standard Inference API endpoint structure
-        self.api_url = f"https://api-inference.huggingface.co/models/{model_name}"
+        # Updated to the new mandatory router endpoint format
+        self.api_url = f"https://router.huggingface.co/hf-inference/models/{model_name}"
         self.headers = {"Authorization": f"Bearer {api_key}"}
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
@@ -24,11 +24,12 @@ class SafeHFInferenceEmbeddings(Embeddings):
         max_retries = 3
         for i in range(max_retries):
             try:
+                print(f"DEBUG: Calling HF Router API for {len(texts)} texts...", flush=True)
                 response = requests.post(
                     self.api_url,
                     headers=self.headers,
                     json={"inputs": texts, "options": {"wait_for_model": True}},
-                    timeout=20
+                    timeout=30
                 )
                 
                 if response.status_code == 200:
@@ -38,21 +39,32 @@ class SafeHFInferenceEmbeddings(Embeddings):
                     elif isinstance(data, dict) and "error" in data:
                         error_msg = data.get("error", "")
                         if "loading" in error_msg.lower() and i < max_retries - 1:
-                            time.sleep(10) # Wait longer for loading
+                            print(f"DEBUG: Model is loading, waiting 15s (attempt {i+1})...", flush=True)
+                            time.sleep(15)
                             continue
                         raise ValueError(f"HF API Error: {error_msg}")
+                    else:
+                        raise ValueError(f"Unexpected HF response format: {data}")
                 
-                # If we get a 503 (Model loading) or other transient errors
-                if response.status_code in [503, 504, 502] and i < max_retries - 1:
-                    time.sleep(10)
+                # Handle common transient errors
+                if response.status_code in [503, 504, 502, 429] and i < max_retries - 1:
+                    print(f"DEBUG: HF API Status {response.status_code}, retrying in 15s...", flush=True)
+                    time.sleep(15)
                     continue
                     
                 if response.status_code != 200:
                     raise ValueError(f"HF API Failed ({response.status_code}): {response.text[:200]}")
 
+            except requests.exceptions.Timeout:
+                if i < max_retries - 1:
+                    print("DEBUG: HF API Timeout, retrying...", flush=True)
+                    time.sleep(5)
+                    continue
+                raise ValueError("HF API Request timed out. The model might be too large or the server is busy.")
             except Exception as e:
                 if i < max_retries - 1:
-                    time.sleep(5)
+                    print(f"DEBUG: HF API Exception: {e}, retrying...", flush=True)
+                    time.sleep(10)
                     continue
                 raise e
         
@@ -71,6 +83,5 @@ def get_embedding_model():
             model_name=HF_EMBEDDING_MODEL
         )
     else:
-        # Fallback for local
         from langchain_huggingface import HuggingFaceEmbeddings
         return HuggingFaceEmbeddings(model_name=HF_EMBEDDING_MODEL)
