@@ -1,0 +1,15 @@
+FROM node:20-slim
+
+WORKDIR /app
+
+# Install dependencies first for caching
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm install
+
+# Copy the rest of the frontend code
+COPY frontend/ .
+
+EXPOSE 5173
+
+# Run in dev mode with host access
+CMD ["npm", "run", "dev", "--", "--host"]

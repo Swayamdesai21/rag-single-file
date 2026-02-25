@@ -1,0 +1,30 @@
+# Environment
+.env
+.env.local
+.env.*.local
+.venv
+env/
+venv/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+dist/
+dist-ssr
+*.local
+
+# Qdrant Local Data
+qdrant_data/
+temp_uploads/
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
