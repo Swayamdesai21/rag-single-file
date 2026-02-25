@@ -75,17 +75,31 @@ def store_chunks(chunks: list, session_id: str) -> int:
 
 # ─── RETRIEVE (Python-side scan — 100% reliable) ──────────────────────────────
 def retrieve_chunks(session_id: str) -> list:
-    all_pts, _ = qclient().scroll(
-        collection_name=COLLECTION,
-        limit=500, with_payload=True, with_vectors=False
-    )
-    chunks = [
-        p.payload.get("text", "")
-        for p in all_pts
-        if str(p.payload.get("session_id", "")) == session_id and p.payload.get("text")
-    ]
-    print(f"RETRIEVED: {len(chunks)} chunks for session '{session_id}' out of {len(all_pts)} total", flush=True)
-    return chunks
+    try:
+        # Verify collection exists first
+        existing_cols = [c.name for c in qclient().get_collections().collections]
+        if COLLECTION not in existing_cols:
+            print(f"RETRIEVE: Collection '{COLLECTION}' does not exist yet!", flush=True)
+            return []
+
+        all_pts, _ = qclient().scroll(
+            collection_name=COLLECTION,
+            limit=500, with_payload=True, with_vectors=False
+        )
+        chunks = [
+            p.payload.get("text", "")
+            for p in all_pts
+            if str(p.payload.get("session_id", "")) == session_id and p.payload.get("text")
+        ]
+        print(f"RETRIEVE: {len(chunks)} chunks for session '{session_id}' (total in collection: {len(all_pts)})", flush=True)
+        # Log ALL session IDs to detect mismatches
+        all_ids = list(set(str(p.payload.get("session_id","")) for p in all_pts))
+        print(f"RETRIEVE: All session IDs in DB: {all_ids}", flush=True)
+        return chunks
+    except Exception as e:
+        print(f"RETRIEVE ERROR: {e}", flush=True)
+        return []
+
 
 # ─── LLM ──────────────────────────────────────────────────────────────────────
 from langchain_groq import ChatGroq
