@@ -68,9 +68,14 @@ ANSWER:"""
         print(f"DEBUG: Retrieval for session_id: {session_id}, question: {question}", flush=True)
 
         try:
-            # Use strict filter
+            # Use flexible filter: check both 'session_id' and 'metadata.session_id'
+            # Some LangChain versions nest it, some don't.
             qdrant_filter = rest.Filter(
-                must=[
+                should=[
+                    rest.FieldCondition(
+                        key="session_id",
+                        match=rest.MatchValue(value=session_id)
+                    ),
                     rest.FieldCondition(
                         key="metadata.session_id",
                         match=rest.MatchValue(value=session_id)
@@ -79,7 +84,8 @@ ANSWER:"""
             )
             
             docs = vs.similarity_search(question, k=TOP_K, filter=qdrant_filter)
-            print(f"DEBUG: Found {len(docs)} documents with filter", flush=True)
+            print(f"DEBUG: Found {len(docs)} documents for session {session_id}", flush=True)
+
             
             if not docs:
                 all_session_docs = vs.similarity_search("", k=1, filter=qdrant_filter)

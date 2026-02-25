@@ -24,12 +24,12 @@ EMBEDDING_DIMENSION = 384
 HUGGINGFACEHUB_API_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 
 
-# -------------------------
 # Qdrant Configuration
-# -------------------------
-COLLECTION_NAME = "single_file_rag"
+COLLECTION_NAME = "rag_v2"
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
+METADATA_KEY = "session_id" # Standard for newer langchain-qdrant
+
 
 # -------------------------
 # App Configuration
