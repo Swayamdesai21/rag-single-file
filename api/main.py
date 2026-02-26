@@ -291,29 +291,69 @@ async def health():
         "retrieval": "hybrid (BM25 + SentenceTransformer + RRF)"
     }
 
-# ─── INSPECT ──────────────────────────────────────────────────────────────────
-@app.get("/inspect/{session_id}")
-async def inspect(session_id: str):
+# ─── INSPECT / DEBUG ────────────────────────────────────────────────────────────
+@app.post("/debug-chat")
+async def debug_chat(req: ChatRequest):
+    """
+    Runs the full hybrid retrieval pipeline but instead of calling the LLM,
+    returns the top 20 chunks with their exact semantic row ranks, BM25 ranks,
+    and final RRF scores so we can debug why specific texts are missed.
+    """
+    sid = str(req.session_id)
+    query = req.question
+
     client = new_qclient()
-    cols = [c.name for c in client.get_collections().collections]
-    if COLLECTION not in cols:
-        return {"error": f"Collection '{COLLECTION}' does not exist", "available": cols}
+    try:
+        q_vec = embed_query(query)
+        sem_hits = client.search(
+            collection_name=COLLECTION,
+            query_vector=q_vec,
+            query_filter=Filter(must=[FieldCondition(key="session_id", match=MatchValue(value=sid))]),
+            limit=300,
+            with_payload=True,
+        )
+        sem_ranks = {hit.payload.get("text", ""): rank for rank, hit in enumerate(sem_hits) if hit.payload.get("text", "").strip()}
+    except Exception as e:
+        sem_ranks = {}
+
     all_pts, _ = client.scroll(
         collection_name=COLLECTION, limit=10000,
         with_payload=True, with_vectors=False
     )
-    matched = [
-        {"id": str(p.id), "preview": p.payload.get("text", "")[:120]}
-        for p in all_pts
-        if str(p.payload.get("session_id", "")) == session_id
-    ]
-    all_ids = list(set(str(p.payload.get("session_id", "")) for p in all_pts))
+    all_texts = [p.payload.get("text", "") for p in all_pts if str(p.payload.get("session_id", "")) == sid and p.payload.get("text", "").strip()]
+
+    bm25_scores_list = bm25_score(all_texts, query)
+    bm25_ranked = sorted(range(len(all_texts)), key=lambda i: bm25_scores_list[i], reverse=True)
+    bm25_ranks = {all_texts[i]: rank for rank, i in enumerate(bm25_ranked)}
+    bm25_raw = {all_texts[i]: bm25_scores_list[i] for i in range(len(all_texts))}
+
+    K = 60
+    all_unique = list(dict.fromkeys(list(sem_ranks.keys()) + all_texts))
+    rrf = {}
+    for text in all_unique:
+        sem_r = sem_ranks.get(text, len(all_unique))
+        bm25_r = bm25_ranks.get(text, len(all_unique))
+        rrf[text] = 1 / (K + sem_r) + 1 / (K + bm25_r)
+
+    ranked = sorted(all_unique, key=lambda t: rrf[t], reverse=True)
+
+    debug_results = []
+    for t in ranked[:40]:
+        debug_results.append({
+            "text": t,
+            "rrf_score": rrf[t],
+            "semantic_rank": sem_ranks.get(t, -1),
+            "bm25_rank": bm25_ranks.get(t, -1),
+            "bm25_raw": bm25_raw.get(t, 0)
+        })
+
     return {
-        "searched_session": session_id,
-        "matched_count": len(matched),
-        "all_session_ids_in_db": all_ids,
-        "sample": matched[:3]
+        "session_id": sid,
+        "query": query,
+        "total_chunks_scrolled": len(all_texts),
+        "results": debug_results
     }
+
 
 # ─── UPLOAD FILE (legacy — kept for DOCX/PPTX) ────────────────────────────────
 @app.post("/upload")
