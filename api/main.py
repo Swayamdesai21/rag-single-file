@@ -355,6 +355,21 @@ async def debug_chat(req: ChatRequest):
     }
 
 
+@app.get("/debug-sessions")
+async def debug_sessions():
+    """Returns a list of all unique session IDs currently in the DB"""
+    client = new_qclient()
+    try:
+        all_pts, _ = client.scroll(
+            collection_name=COLLECTION, limit=10000,
+            with_payload=True, with_vectors=False
+        )
+        sessions = list(set(str(p.payload.get("session_id", "")) for p in all_pts if p.payload.get("session_id")))
+        return {"sessions": sessions}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # ─── UPLOAD FILE (legacy — kept for DOCX/PPTX) ────────────────────────────────
 @app.post("/upload")
 async def upload(session_id: str, file: UploadFile = File(...)):
