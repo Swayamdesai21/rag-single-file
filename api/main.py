@@ -17,7 +17,7 @@ TEMP_DIR   = "/tmp"
 GROQ_KEY   = os.getenv("GROQ_API_KEY", "")
 QDRANT_URL = os.getenv("QDRANT_URL", "")
 QDRANT_KEY = os.getenv("QDRANT_API_KEY", "")
-HF_TOKEN   = os.getenv("HUGGINGFACEHUB_API_TOKEN", "")
+HF_TOKEN   = os.getenv("HUGGINGFACEHUB_API_TOKEN", "").strip()
 SUPPORTED  = {".pdf", ".docx", ".doc", ".pptx", ".ppt", ".txt", ".md"}
 
 # New hybrid collection — real 384-dim embeddings + payload text for BM25
