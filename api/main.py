@@ -374,12 +374,23 @@ async def debug_sessions():
 
 @app.get("/debug-qclient")
 async def debug_qclient():
-    from qdrant_client import __version__ as qd_version
-    client = new_qclient()
+    import importlib.metadata
+    try:
+        qd_version = importlib.metadata.version("qdrant-client")
+    except Exception as e:
+        qd_version = str(e)
+        
+    try:
+        client = new_qclient()
+        methods = dir(client)
+    except Exception as e:
+        client = None
+        methods = [str(e)]
+        
     return {
         "version": qd_version,
         "type": str(type(client)),
-        "dir": dir(client)
+        "dir": methods
     }
 
 
