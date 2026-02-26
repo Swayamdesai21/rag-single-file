@@ -89,7 +89,7 @@ def load_and_chunk(path: str) -> list:
         loader = TextLoader(path, encoding="utf-8", autodetect_encoding=True)
     docs = loader.load()
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000, chunk_overlap=150,
+        chunk_size=800, chunk_overlap=150,
         separators=["\n\n", "\n", ". ", "! ", "? ", " ", ""]
     )
     return splitter.split_documents(docs)
@@ -170,7 +170,7 @@ def bm25_score(chunks: list[str], query: str, k1: float = 1.5, b: float = 0.75) 
     return scores
 
 # ─── HYBRID RETRIEVE (Semantic + BM25 + RRF) ─────────────────────────────────
-def hybrid_retrieve(session_id: str, query: str, top_k: int = 60) -> list[str]:
+def hybrid_retrieve(session_id: str, query: str, top_k: int = 20) -> list[str]:
     """
     1. Embed query → Qdrant vector search (semantic, filtered by session_id)
     2. Scroll all session chunks → BM25 keyword scoring
@@ -352,7 +352,7 @@ async def upload_text(req: TextUploadRequest):
         raise HTTPException(400, "No meaningful text content provided")
     try:
         splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000, chunk_overlap=150,
+            chunk_size=800, chunk_overlap=150,
             separators=["\n\n", "\n", ". ", "! ", "? ", " ", ""]
         )
         raw_chunks = splitter.split_text(req.text)
@@ -374,7 +374,7 @@ async def chat(req: ChatRequest):
     session_id = str(req.session_id)
 
     # Hybrid retrieval: Sentence Transformer semantic + BM25 keyword + RRF fusion
-    top_chunks = hybrid_retrieve(session_id, req.question, top_k=60)
+    top_chunks = hybrid_retrieve(session_id, req.question, top_k=20)
     print(f"CHAT: session='{session_id}' hybrid_chunks={len(top_chunks)}", flush=True)
 
     if not top_chunks:
