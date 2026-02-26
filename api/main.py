@@ -303,6 +303,7 @@ async def debug_chat(req: ChatRequest):
     query = req.question
 
     client = new_qclient()
+    sem_error = None
     try:
         q_vec = embed_query(query)
         sem_hits = client.search(
@@ -315,6 +316,7 @@ async def debug_chat(req: ChatRequest):
         sem_ranks = {hit.payload.get("text", ""): rank for rank, hit in enumerate(sem_hits) if hit.payload.get("text", "").strip()}
     except Exception as e:
         sem_ranks = {}
+        sem_error = str(e)
 
     all_pts, _ = client.scroll(
         collection_name=COLLECTION, limit=10000,
@@ -351,6 +353,7 @@ async def debug_chat(req: ChatRequest):
         "session_id": sid,
         "query": query,
         "total_chunks_scrolled": len(all_texts),
+        "semantic_error": sem_error,
         "results": debug_results
     }
 
