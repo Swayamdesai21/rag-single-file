@@ -170,7 +170,7 @@ def bm25_score(chunks: list[str], query: str, k1: float = 1.5, b: float = 0.75) 
     return scores
 
 # ─── HYBRID RETRIEVE (Semantic + BM25 + RRF) ─────────────────────────────────
-def hybrid_retrieve(session_id: str, query: str, top_k: int = 12) -> list[str]:
+def hybrid_retrieve(session_id: str, query: str, top_k: int = 40) -> list[str]:
     """
     1. Embed query → Qdrant vector search (semantic, filtered by session_id)
     2. Scroll all session chunks → BM25 keyword scoring
@@ -192,7 +192,7 @@ def hybrid_retrieve(session_id: str, query: str, top_k: int = 12) -> list[str]:
             collection_name=COLLECTION,
             query_vector=q_vec,
             query_filter=Filter(must=[FieldCondition(key="session_id", match=MatchValue(value=sid))]),
-            limit=50,
+            limit=150,
             with_payload=True,
         )
         # Map text → semantic rank
@@ -211,7 +211,7 @@ def hybrid_retrieve(session_id: str, query: str, top_k: int = 12) -> list[str]:
 
     # ── Keyword: BM25 over all session chunks ────────────────────────────────
     all_pts, _ = client.scroll(
-        collection_name=COLLECTION, limit=1000,
+        collection_name=COLLECTION, limit=10000,
         with_payload=True, with_vectors=False
     )
     all_texts = [
@@ -299,7 +299,7 @@ async def inspect(session_id: str):
     if COLLECTION not in cols:
         return {"error": f"Collection '{COLLECTION}' does not exist", "available": cols}
     all_pts, _ = client.scroll(
-        collection_name=COLLECTION, limit=500,
+        collection_name=COLLECTION, limit=10000,
         with_payload=True, with_vectors=False
     )
     matched = [
@@ -374,7 +374,7 @@ async def chat(req: ChatRequest):
     session_id = str(req.session_id)
 
     # Hybrid retrieval: Sentence Transformer semantic + BM25 keyword + RRF fusion
-    top_chunks = hybrid_retrieve(session_id, req.question, top_k=12)
+    top_chunks = hybrid_retrieve(session_id, req.question, top_k=40)
     print(f"CHAT: session='{session_id}' hybrid_chunks={len(top_chunks)}", flush=True)
 
     if not top_chunks:
