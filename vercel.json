@@ -18,7 +18,7 @@
     ],
     "rewrites": [
         {
-            "source": "/(chat|upload|upload-text|health|inspect|debug-retrieve|debug-chat|debug-sessions)(.*)",
+            "source": "/(chat|upload|upload-text|health|inspect|debug-retrieve|debug-chat|debug-sessions|debug-qclient)(.*)",
             "destination": "/api/main.py"
         },
         {

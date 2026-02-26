@@ -372,6 +372,16 @@ async def debug_sessions():
     except Exception as e:
         return {"error": str(e)}
 
+@app.get("/debug-qclient")
+async def debug_qclient():
+    from qdrant_client import __version__ as qd_version
+    client = new_qclient()
+    return {
+        "version": qd_version,
+        "type": str(type(client)),
+        "dir": dir(client)
+    }
+
 
 # ─── UPLOAD FILE (legacy — kept for DOCX/PPTX) ────────────────────────────────
 @app.post("/upload")
