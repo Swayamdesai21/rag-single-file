@@ -43,6 +43,14 @@ def ensure_collection(client: QdrantClient):
             collection_name=COLLECTION,
             vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE)
         )
+        try:
+            client.create_payload_index(
+                collection_name=COLLECTION,
+                field_name="session_id",
+                field_schema="keyword"
+            )
+        except Exception as e:
+            print(f"QDRANT: Warning - could not create payload index: {e}", flush=True)
         print(f"QDRANT: Created collection '{COLLECTION}'", flush=True)
 
 # ─── SENTENCE TRANSFORMER EMBEDDINGS (HF API) ─────────────────────────────────
@@ -359,6 +367,22 @@ async def debug_chat(req: ChatRequest):
         "results": debug_results
     }
 
+
+@app.get("/init-db")
+async def init_db():
+    """Forces creation of the payload index on session_id to fix the 400 Bad Request error."""
+    client = new_qclient()
+    try:
+        ensure_collection(client)
+        # Force index creation just in case
+        client.create_payload_index(
+            collection_name=COLLECTION,
+            field_name="session_id",
+            field_schema="keyword"
+        )
+        return {"status": "success", "message": f"Successfully created keyword index on session_id in {COLLECTION}"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 @app.get("/debug-sessions")
 async def debug_sessions():
