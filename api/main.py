@@ -188,13 +188,14 @@ def hybrid_retrieve(session_id: str, query: str, top_k: int = 20) -> list[str]:
     # ── Semantic: embed query + Qdrant search ─────────────────────────────────
     try:
         q_vec = embed_query(query)
-        sem_hits = client.search(
+        sem_res = client.query_points(
             collection_name=COLLECTION,
-            query_vector=q_vec,
+            query=q_vec,
             query_filter=Filter(must=[FieldCondition(key="session_id", match=MatchValue(value=sid))]),
             limit=300,
             with_payload=True,
         )
+        sem_hits = sem_res.points
         # Map text → semantic rank
         sem_ranks: dict[str, int] = {}
         sem_texts: list[str] = []
@@ -306,13 +307,14 @@ async def debug_chat(req: ChatRequest):
     sem_error = None
     try:
         q_vec = embed_query(query)
-        sem_hits = client.search(
+        sem_res = client.query_points(
             collection_name=COLLECTION,
-            query_vector=q_vec,
+            query=q_vec,
             query_filter=Filter(must=[FieldCondition(key="session_id", match=MatchValue(value=sid))]),
             limit=300,
             with_payload=True,
         )
+        sem_hits = sem_res.points
         sem_ranks = {hit.payload.get("text", ""): rank for rank, hit in enumerate(sem_hits) if hit.payload.get("text", "").strip()}
     except Exception as e:
         sem_ranks = {}
